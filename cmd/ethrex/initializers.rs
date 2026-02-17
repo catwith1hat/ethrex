@@ -143,28 +143,60 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    let mut store = open_store(datadir.as_ref(), None, None)?;
+    store.add_initial_state(genesis).await?;
+    Ok(store)
+}
+
+/// Opens a new or pre-existing Store with optional tiered storage.
+pub async fn init_store_tiered(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    cold_path: Option<&Path>,
+    hot_blocks: Option<u64>,
+) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref(), cold_path, hot_blocks)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
 /// Initializes a pre-existing Store
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    let store = open_store(datadir, None, None)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+/// Opens a pre-existing Store or creates a new one.
+///
+/// When `cold_path` is `Some`, tiered storage is enabled: recent block data
+/// stays in `datadir` (hot) while historical data is migrated to `cold_path`.
+pub fn open_store(
+    datadir: &Path,
+    cold_path: Option<&Path>,
+    hot_blocks: Option<u64>,
+) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
         Store::new(datadir, EngineType::InMemory)
     } else {
-        #[cfg(feature = "rocksdb")]
-        let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+
+        #[cfg(feature = "rocksdb")]
+        {
+            if let Some(cold) = cold_path {
+                let blocks = hot_blocks.unwrap_or(100_000);
+                Store::new_tiered(datadir, cold, blocks)
+            } else {
+                Store::new(datadir, EngineType::RocksDB)
+            }
+        }
+
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            let _ = (cold_path, hot_blocks);
+            Store::new(datadir, EngineType::InMemory)
+        }
     }
 }
 
@@ -451,7 +483,14 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store = match init_store_tiered(
+        datadir,
+        genesis,
+        opts.datadir_cold.as_deref(),
+        Some(opts.hot_blocks),
+    )
+    .await
+    {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion { .. }) => {

@@ -75,6 +75,24 @@ pub struct Options {
     )]
     pub datadir: PathBuf,
     #[arg(
+        long = "datadir-cold",
+        value_name = "COLD_DATABASE_DIRECTORY",
+        help = "Path to cold storage directory for historical block data.",
+        long_help = "When set, enables tiered storage: recent blocks stay in --datadir (hot) while older blocks are moved to this directory (cold). If not set, all data stays in --datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_DATADIR_COLD"
+    )]
+    pub datadir_cold: Option<PathBuf>,
+    #[arg(
+        long = "storage.hot-blocks",
+        value_name = "NUM_BLOCKS",
+        default_value_t = 100_000,
+        help = "Number of recent blocks to keep in hot storage when tiered storage is enabled.",
+        help_heading = "Node options",
+        env = "ETHREX_HOT_BLOCKS"
+    )]
+    pub hot_blocks: u64,
+    #[arg(
         long = "force",
         help = "Force remove the database",
         long_help = "Delete the database without confirmation.",
@@ -360,6 +378,8 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
+            datadir_cold: None,
+            hot_blocks: 100_000,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),

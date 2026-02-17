@@ -27,7 +27,28 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
+    /// Opens a RocksDB instance containing only the specified tables.
+    /// Used by the tiered backend to create a cold DB with only warm CFs.
+    pub fn open_with_tables(
+        path: impl AsRef<Path>,
+        tables: &[&str],
+    ) -> Result<Self, StoreError> {
+        Self::open_internal(path, Some(tables))
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::open_internal(path, None)
+    }
+
+    /// Internal opener.  When `table_subset` is `None`, all [`TABLES`] are
+    /// opened (the normal hot-DB case).  When `Some`, only the listed tables
+    /// are created/opened (used for the cold DB).
+    fn open_internal(
+        path: impl AsRef<Path>,
+        table_subset: Option<&[&str]>,
+    ) -> Result<Self, StoreError> {
+        let required_tables: &[&str] = table_subset.unwrap_or(&TABLES);
+
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -82,7 +103,7 @@ impl RocksDBBackend {
 
         let mut all_cfs_to_open = HashSet::new();
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
-        all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
+        all_cfs_to_open.extend(required_tables.iter().map(|table| table.to_string()));
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -189,7 +210,7 @@ impl RocksDBBackend {
 
         // Clean up obsolete column families
         for cf_name in &existing_cfs {
-            if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
+            if cf_name != "default" && !required_tables.contains(&cf_name.as_str()) {
                 warn!("Dropping obsolete column family: {}", cf_name);
                 let _ = db
                     .drop_cf(cf_name)

@@ -1,5 +1,7 @@
 #[cfg(feature = "rocksdb")]
 use crate::backend::rocksdb::RocksDBBackend;
+#[cfg(feature = "rocksdb")]
+use crate::backend::tiered::TieredBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -1428,6 +1430,24 @@ impl Store {
         }
     }
 
+    /// Create a store with tiered storage (hot + cold RocksDB instances).
+    ///
+    /// - `hot_path`: path to the primary data directory.
+    /// - `cold_path`: path to the cold data directory for historical block data.
+    /// - `hot_blocks`: number of recent blocks to keep in the hot tier.
+    #[cfg(feature = "rocksdb")]
+    pub fn new_tiered(
+        hot_path: impl AsRef<Path>,
+        cold_path: impl AsRef<Path>,
+        hot_blocks: u64,
+    ) -> Result<Self, StoreError> {
+        let db_path = hot_path.as_ref().to_path_buf();
+        validate_store_schema_version(&db_path)?;
+
+        let backend = Arc::new(TieredBackend::open(hot_path, cold_path, hot_blocks)?);
+        Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+    }
+
     fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
@@ -2138,6 +2158,9 @@ impl Store {
             finalized,
         )
         .await?;
+
+        // Inform tiered-storage migration worker about the new head.
+        self.backend.notify_head(head_number);
 
         Ok(())
     }

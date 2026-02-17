@@ -6,3 +6,6 @@ pub mod in_memory;
 /// RocksDB backend
 #[cfg(feature = "rocksdb")]
 pub mod rocksdb;
+/// Tiered storage backend (hot RocksDB + cold RocksDB)
+#[cfg(feature = "rocksdb")]
+pub mod tiered;

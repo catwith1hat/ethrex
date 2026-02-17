@@ -51,6 +51,12 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Notify the backend of the current chain head block number.
+    ///
+    /// Used by the tiered backend to inform the migration worker.
+    /// Default implementation is a no-op.
+    fn notify_head(&self, _block_number: u64) {}
 }
 
 /// Read-only transaction interface.

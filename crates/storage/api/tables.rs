@@ -123,3 +123,15 @@ pub const TABLES: [&str; 19] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
 ];
+
+/// Column families that hold per-block data eligible for cold-tier migration.
+/// These are the only CFs that exist in the cold RocksDB instance.
+pub const WARM_TABLES: [&str; 4] = [HEADERS, BODIES, RECEIPTS, TRANSACTION_LOCATIONS];
+
+/// Returns `true` if `table` is a warm table that may have data in the cold tier.
+pub fn is_warm_table(table: &str) -> bool {
+    matches!(
+        table,
+        HEADERS | BODIES | RECEIPTS | TRANSACTION_LOCATIONS
+    )
+}
