@@ -1,8 +1,6 @@
 use ethrex_common::types::ChainConfig;
 use ethrex_storage::Store;
-use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 use crate::{
@@ -12,27 +10,32 @@ use crate::{
 mod peers;
 pub use peers::{add_peer, peers};
 
-#[derive(Serialize, Debug)]
-struct NodeInfo {
-    enode: String,
-    enr: String,
-    id: String,
-    ip: String,
-    name: String,
-    ports: Ports,
-    protocols: HashMap<String, Protocol>,
-}
+/// Serialize a ChainConfig to a serde_json::Value, working around the fact
+/// that serde_json::to_value cannot represent u128 values exceeding u64::MAX
+/// (the terminal_total_difficulty field is u128).
+fn chain_config_to_value(config: &ChainConfig) -> Result<Value, RpcErr> {
+    let ttd = config.terminal_total_difficulty;
 
-#[derive(Serialize, Debug)]
-struct Ports {
-    discovery: u16,
-    listener: u16,
-}
+    // Serialize with TTD cleared to avoid u128 overflow in to_value
+    let mut config = config.clone();
+    config.terminal_total_difficulty = None;
 
-#[derive(Serialize, Debug)]
-#[serde(untagged)]
-enum Protocol {
-    Eth(ChainConfig),
+    let mut value =
+        serde_json::to_value(&config).map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+    // Re-insert TTD, using u64 when possible, decimal string otherwise
+    if let Some(obj) = value.as_object_mut() {
+        let ttd_value = match ttd {
+            Some(v) => match u64::try_from(v) {
+                Ok(n) => Value::Number(n.into()),
+                Err(_) => Value::String(v.to_string()),
+            },
+            None => Value::Null,
+        };
+        obj.insert("terminalTotalDifficulty".to_string(), ttd_value);
+    }
+
+    Ok(value)
 }
 
 pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
@@ -41,24 +44,25 @@ pub fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> 
         Ok(enr) => enr,
         Err(_) => "".into(),
     };
-    let mut protocols = HashMap::new();
 
     let chain_config = storage.get_chain_config();
-    protocols.insert("eth".to_string(), Protocol::Eth(chain_config));
+    let chain_config_value = chain_config_to_value(&chain_config)?;
 
-    let node_info = NodeInfo {
-        enode: enode_url,
-        enr: enr_url,
-        id: hex::encode(node_data.local_p2p_node.node_id()),
-        name: node_data.client_version.to_string(),
-        ip: node_data.local_p2p_node.ip.to_string(),
-        ports: Ports {
-            discovery: node_data.local_p2p_node.udp_port,
-            listener: node_data.local_p2p_node.tcp_port,
+    let mut protocols = serde_json::Map::new();
+    protocols.insert("eth".to_string(), chain_config_value);
+
+    Ok(serde_json::json!({
+        "enode": enode_url,
+        "enr": enr_url,
+        "id": hex::encode(node_data.local_p2p_node.node_id()),
+        "name": node_data.client_version.to_string(),
+        "ip": node_data.local_p2p_node.ip.to_string(),
+        "ports": {
+            "discovery": node_data.local_p2p_node.udp_port,
+            "listener": node_data.local_p2p_node.tcp_port,
         },
-        protocols,
-    };
-    serde_json::to_value(node_info).map_err(|error| RpcErr::Internal(error.to_string()))
+        "protocols": Value::Object(protocols),
+    }))
 }
 
 pub fn set_log_level(
